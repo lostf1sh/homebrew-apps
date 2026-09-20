@@ -1,0 +1,40 @@
+name: Validate casks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Update Homebrew
+        run: brew update
+      - name: Register checked-out tap
+        shell: bash
+        run: |
+          tap_dir="$(brew --repository)/Library/Taps/lostf1sh/homebrew-apps"
+          mkdir -p "$(dirname "$tap_dir")"
+          ln -s "$GITHUB_WORKSPACE" "$tap_dir"
+          if brew help trust >/dev/null 2>&1; then
+            brew trust --cask lostf1sh/apps/sakuracord lostf1sh/apps/compositor
+          fi
+      - name: Check style
+        run: brew style --cask lostf1sh/apps/sakuracord lostf1sh/apps/compositor
+      - name: Audit upstream packages
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
+        run: brew audit --cask --online lostf1sh/apps/sakuracord lostf1sh/apps/compositor
