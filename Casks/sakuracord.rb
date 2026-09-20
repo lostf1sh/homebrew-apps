@@ -17,4 +17,11 @@ cask "sakuracord" do
   depends_on macos: :golden_gate
 
   app "SakuraCord.app"
+
+  postflight_steps do
+    run "/usr/bin/xattr",
+        args:           ["-cr", "{{appdir}}/SakuraCord.app"],
+        writable_paths: ["SakuraCord.app"],
+        writable_base:  :appdir
+  end
 end

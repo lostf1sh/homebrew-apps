@@ -1,0 +1,68 @@
+name: Update casks
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+    inputs:
+      verify:
+        description: Run package validation even when versions are unchanged
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-casks
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - name: Check stable upstream releases
+        id: updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/update_casks.py
+      - name: Update Homebrew
+        if: steps.updates.outputs.changed == 'true' || inputs.verify == true
+        run: brew update
+      - name: Register checked-out tap
+        if: steps.updates.outputs.changed == 'true' || inputs.verify == true
+        shell: bash
+        run: |
+          tap_dir="$(brew --repository)/Library/Taps/lostf1sh/homebrew-apps"
+          mkdir -p "$(dirname "$tap_dir")"
+          ln -s "$GITHUB_WORKSPACE" "$tap_dir"
+          if brew help trust >/dev/null 2>&1; then
+            brew trust --cask lostf1sh/apps/sakuracord lostf1sh/apps/compositor
+          fi
+      - name: Validate candidate casks before publishing
+        if: steps.updates.outputs.changed == 'true' || inputs.verify == true
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
+        run: |
+          brew style --cask lostf1sh/apps/sakuracord lostf1sh/apps/compositor
+          brew audit --cask --online lostf1sh/apps/sakuracord lostf1sh/apps/compositor
+      # GITHUB_TOKEN pushes do not trigger the push validation workflow.
+      # The checks above therefore run on the exact files before committing.
+      - name: Commit validated updates
+        if: steps.updates.outputs.changed == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- Casks/sakuracord.rb Casks/compositor.rb
+          git diff --cached --check
+          git commit -m 'Update casks to latest stable releases'
+          # A concurrent main-branch change rejects this push. The next run
+          # starts fresh and validates again; never force-push or rebase here.
+          git push origin HEAD:main
