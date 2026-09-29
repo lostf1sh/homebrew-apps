@@ -1,6 +1,6 @@
 cask "compositor" do
-  version "1.4.2"
-  sha256 "a360206abb20d9bcfbd1bc5a0cc73d683201f3afbc8d41559bb53592715e76ca"
+  version "1.4.4"
+  sha256 "bafc674d982ba16ffd44dffc86b98c645d379ca30168fc9697847f92e38fcf33"
 
   url "https://github.com/robbietilton/Compositor/releases/download/v#{version}/Compositor.dmg"
   name "Compositor"
