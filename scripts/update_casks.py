@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Update pinned casks from newer stable upstream GitHub releases."""
+"""Update pinned casks from stable upstream releases and replaced assets."""
 
 import argparse
 import hashlib
@@ -65,8 +65,9 @@ def prepare_update(text, release, repo, app_name, downloader=asset_sha256):
     current = re.search(r'^  version "([^"\n]+)"$', text, re.MULTILINE)
     if not current:
         raise ValueError("Missing pinned cask version")
-    # Do not downgrade or silently replace the hash of an existing version.
-    if new_key <= version_key(current[1]):
+    current_key = version_key(current[1])
+    # Do not downgrade, but check for replaced assets at the pinned version.
+    if new_key < current_key:
         return text
 
     assets = [a for a in release["assets"]
@@ -80,11 +81,23 @@ def prepare_update(text, release, repo, app_name, downloader=asset_sha256):
     url = f'https://github.com/{repo}/releases/download/{tag}/{asset["name"]}'
     if asset["browser_download_url"] != url:
         raise ValueError("Unexpected asset download URL")
-    checksum = downloader(url, asset.get("digest"))
+    expected = asset.get("digest")
+    if expected and not re.fullmatch(r"sha256:[a-f0-9]{64}", expected):
+        raise ValueError("Invalid GitHub asset SHA-256 digest")
+    template = url.replace(version, "#{version}")
+    if new_key == current_key:
+        checksum_stanza = re.search(r'^  sha256 "([a-f0-9]{64})"$', text, re.MULTILINE)
+        url_stanza = re.search(r'^  url "([^"\n]+)"$', text, re.MULTILINE)
+        if not checksum_stanza or not url_stanza:
+            raise ValueError("Missing pinned cask checksum or URL")
+        # GitHub's digest avoids downloading unchanged releases every 30 minutes.
+        if expected == f"sha256:{checksum_stanza[1]}" and url_stanza[1] == template:
+            return text
+    # A changed digest (or unavailable digest) must be verified by downloading.
+    checksum = downloader(url, expected)
     if not re.fullmatch(r"[a-f0-9]{64}", checksum):
         raise ValueError("Invalid SHA-256")
     # All interpolated metadata above is allowlisted before entering Ruby source.
-    template = url.replace(version, "#{version}")
     for name, value in (("version", version), ("sha256", checksum), ("url", template)):
         text = replace_stanza(text, name, value)
     return text
@@ -98,7 +111,12 @@ def update_all(cask_dir):
         after = prepare_update(before, latest_release(repo), repo, app_name)
         if before != after:
             pending.append((path, after))
-        print(f'{token}: {"update available" if before != after else "up to date"}')
+            before_version = re.search(r'^  version "([^"\n]+)"$', before, re.MULTILINE)[1]
+            after_version = re.search(r'^  version "([^"\n]+)"$', after, re.MULTILINE)[1]
+            reason = "asset changed at pinned version" if before_version == after_version else "update available"
+            print(f"{token}: {reason}")
+        else:
+            print(f"{token}: up to date")
     # Prepare both first: an upstream error must not leave a partial update.
     for path, content in pending:
         path.write_text(content)
